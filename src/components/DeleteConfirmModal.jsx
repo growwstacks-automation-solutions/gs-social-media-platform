@@ -12,7 +12,7 @@ import { Spinner } from './Loader.jsx';
  *   confirmLabel  — main destructive button text (default "Delete")
  *   busy          — show spinner + disable confirm
  *   onConfirm     — called when user confirms
- *   onClose       — called when user cancels / hits Esc / clicks backdrop
+ *   onClose       — called when user cancels / hits Esc / clicks backdrop..
  */
 export default function DeleteConfirmModal({
   title = 'Delete this post?',

@@ -1,0 +1,418 @@
+================================================================================
+ MULTI-PLATFORM MIGRATION PLAN
+ LinkedIn-only  ->  Instagram + X + LinkedIn + Facebook
+ Airtable       ->  Supabase
+ Direct DB writes -> Webhook-only mutations (frontend reads via Supabase)
+================================================================================
+
+NOTE: This document is IDEATION ONLY. No existing files have been modified.
+      Use this as the blueprint when you are ready to implement.
+
+================================================================================
+ 1. CORE ARCHITECTURAL SHIFTS
+================================================================================
+
+  TODAY                                  ->  TOMORROW
+  -----------------------------------------------------------------------------
+  1 Airtable row = 1 LinkedIn post       ->  1 `campaign` row (shared image)
+                                             + N `platform_post` rows
+                                             (one per chosen platform)
+
+  Frontend writes directly to Airtable   ->  Frontend ONLY reads from Supabase.
+                                             Every action fires a webhook ->
+                                             n8n writes to Supabase.
+
+  Poll Airtable every 3s for AI result   ->  Supabase Realtime subscription
+                                             pushes updates as n8n writes them.
+
+  Custom LoginModal querying             ->  Supabase Auth
+  `Credentials` table with embedded          (email/password or magic link).
+  password.
+
+  One generated image, one caption.      ->  Same image shared across platforms;
+                                             per-platform caption;
+                                             per-platform approve/schedule/post.
+
+  Single image for Observance.           ->  For Event / Collage: 3-4 image
+                                             previews -> user picks one.
+
+
+================================================================================
+ 2. SUPABASE SCHEMA
+================================================================================
+
+ Use Supabase built-in `auth.users` for login. Drop the `Credentials` table.
+
+ ------------------------------------------------------------------------------
+ TABLE: campaigns
+ (the shared idea -- event name, post type, the one shared image)
+ ------------------------------------------------------------------------------
+   id                          uuid PK default gen_random_uuid()
+   created_by                  uuid FK -> auth.users.id
+   event_name                  text not null
+   event_date                  date
+   post_type                   text check in ('observance','event','collage')
+   image_prompt                text                 -- "Personal Touch"
+   source_image_urls           text[]               -- user-supplied URLs
+                                                    -- (event/collage uploads)
+   generated_image_variants    text[]               -- 1 for observance,
+                                                    -- 3-4 for event/collage
+   selected_variant_index      int  default 0       -- which variant picked
+   image_status                text check in
+                               ('idle','generating','ready','failed')
+                               default 'idle'
+   image_error                 text
+   created_at                  timestamptz default now()
+   updated_at                  timestamptz default now()  -- via trigger
+
+ Helper: `selected_image_url` is just
+         generated_image_variants[selected_variant_index] in the client.
+
+ ------------------------------------------------------------------------------
+ TABLE: platform_posts
+ (one row per platform per campaign -- per-platform state lives here)
+ ------------------------------------------------------------------------------
+   id                  uuid PK
+   campaign_id         uuid FK -> campaigns.id on delete cascade
+   platform            text check in
+                       ('instagram','twitter','linkedin','facebook')
+   caption_style       text   -- Engaging / Professional / Data-Driven /
+                              -- Conversational
+   caption_draft       text   -- AI-generated, platform-specific
+   caption_status      text check in
+                       ('idle','generating','ready','regenerate','failed')
+   approval_status     text check in ('pending','approved','rejected')
+                       default 'pending'
+   published_status    text check in ('pending','scheduled','posted','failed')
+                       default 'pending'
+   scheduled_at        timestamptz
+   posted_at           timestamptz
+   external_post_url   text   -- live URL on the platform
+   external_post_id    text   -- platform's native id
+   tag_urls            text[] -- (replaces TagURLs)
+   tag_urns            text[] -- (replaces TagURNs)
+   error_message       text
+   created_at          timestamptz default now()
+   updated_at          timestamptz default now()
+
+ Unique constraint: (campaign_id, platform)
+                    -> one row per platform per campaign.
+
+ ------------------------------------------------------------------------------
+ TABLE: webhook_events  (recommended -- audit / retry log)
+ ------------------------------------------------------------------------------
+   id                  uuid PK
+   action              text          -- e.g. 'caption.regenerate'
+   campaign_id         uuid
+   platform_post_id    uuid nullable
+   payload             jsonb
+   response            jsonb
+   status              text          -- 'sent','success','failed'
+   created_at          timestamptz default now()
+
+ ------------------------------------------------------------------------------
+ ROW LEVEL SECURITY  (this enforces "webhook-only writes" at the DB level)
+ ------------------------------------------------------------------------------
+   Enable RLS on `campaigns` and `platform_posts`.
+
+   SELECT  : created_by = auth.uid()
+             (or team-based if you go multi-user)
+   INSERT/
+   UPDATE/
+   DELETE  : DENIED for anon and authenticated.
+             Only the service-role key (used by n8n) can write.
+
+ ------------------------------------------------------------------------------
+ REALTIME
+ ------------------------------------------------------------------------------
+   ALTER TABLE campaigns       REPLICA IDENTITY FULL;
+   ALTER TABLE platform_posts  REPLICA IDENTITY FULL;
+   ALTER PUBLICATION supabase_realtime ADD TABLE campaigns, platform_posts;
+
+
+================================================================================
+ 3. WEBHOOK ACTION CATALOG
+================================================================================
+
+ Single endpoint:   POST /webhook/social-orchestrator
+ Body discriminator field: `action`
+ Frontend never writes Supabase directly. Every button maps to ONE action.
+
+  ACTION                            PAYLOAD                              n8n RESPONSIBILITY
+  --------------------------------- ------------------------------------ ---------------------------------------------
+  campaign.create                   { event_name, date, post_type,       Insert campaign + N platform_posts rows;
+                                      image_prompt, source_image_urls,    kick off generation flow.
+                                      platforms[], caption_style }
+
+  image.generate                    { campaign_id }                      Generate image(s); for event/collage
+                                                                         produce 3-4 variants.
+
+  image.regenerate                  { campaign_id }                      Same as above; set image_status='generating'.
+
+  image.select                      { campaign_id, variant_index }       Update selected_variant_index.
+
+  captions.generate_all             { campaign_id }                      Generate caption for each platform_post
+                                                                         in parallel.
+
+  caption.regenerate                { platform_post_id }                 Regenerate ONE platform's caption only.
+
+  platform_post.update_style        { platform_post_id, caption_style }  Update style + regenerate caption.
+
+  platform_post.approve             { platform_post_id }                 Set approval_status='approved'.
+
+  platform_post.reject              { platform_post_id }                 Set approval_status='rejected'.
+
+  platform_post.post_now            { platform_post_id }                 Call the platform API; set
+                                                                         published_status='posted',
+                                                                         posted_at, external_post_url.
+
+  platform_post.schedule            { platform_post_id, scheduled_at }   Set published_status='scheduled';
+                                                                         n8n cron picks it up at time.
+
+  platform_post.cancel_schedule     { platform_post_id }                 Reset to 'pending'.
+
+  media.upload                      { post_type, files[] }               Upload to Drive (or Supabase Storage),
+                                                                         return URLs.
+
+
+================================================================================
+ 4. FRONTEND CHANGES
+================================================================================
+
+ ------------------------------------------------------------------------------
+ NEW: src/components/PlatformPickerModal.jsx
+ ------------------------------------------------------------------------------
+   Triggered by "Create Post" CTA BEFORE navigating to PostCreator.
+   Multi-select 4 cards (IG / X / LinkedIn / FB).
+   "Start Creating" disabled until >=1 selected.
+   Pass chosen platforms[] into PostCreator via state or route param.
+
+ ------------------------------------------------------------------------------
+ REFACTORED: src/pages/PostCreator.jsx  (major restructure)
+ ------------------------------------------------------------------------------
+
+   +----------------------------------------------------------------+
+   |  Tabs:  [ Instagram ] [ X ] [ LinkedIn ] [ Facebook ]          |
+   |  (only the chosen ones)                                        |
+   +----------------------------------------------------------------+
+   |  SHARED SECTION (top, not per-tab)                             |
+   |   * Event Name + Date                                          |
+   |   * Post Type (Observance / Event / Collage)                   |
+   |   * Image source (upload / link rows) for Event/Collage        |
+   |   * Personal Touch prompt                                      |
+   |   * [ Generate Content ] button                                |
+   +----------------------------------------------------------------+
+   |  IMAGE PREVIEW (shared across platforms)                       |
+   |   Observance: single image     [ Regenerate Image ]            |
+   |   Event/Collage: 3-4 thumbnails -- pick one  [ Regenerate ]    |
+   +----------------------------------------------------------------+
+   |  ACTIVE TAB CONTENT (per-platform)                             |
+   |   * Caption Style chips                                        |
+   |   * Caption text (read-only or editable)                       |
+   |   * [ Regenerate Caption for {platform} ]                      |
+   |   * [ Approve ]   [ Reject ]                                   |
+   |   * [ Post Now to {platform} ]                                 |
+   |   * Date + time -> [ Schedule on {platform} ]                  |
+   +----------------------------------------------------------------+
+   |  RIGHT RAIL: platform-specific mock preview                    |
+   |   (IG square, X tweet card, LinkedIn feed, FB feed)            |
+   +----------------------------------------------------------------+
+
+   Each tab badge shows its status:
+   `generating` / `ready` / `posted` / `scheduled`.
+
+ ------------------------------------------------------------------------------
+ REFACTORED: src/services/
+ ------------------------------------------------------------------------------
+   * supabase.js  -- read-only client (anon key, RLS-protected).
+                     Exports query helpers and realtime subscription helpers.
+   * webhook.js   -- single fireWebhook(action, payload).
+                     Replaces ALL direct mutation paths.
+
+ ------------------------------------------------------------------------------
+ REFACTORED: src/hooks/useRecords.js -> src/hooks/useCampaigns.js
+ ------------------------------------------------------------------------------
+   * Initial fetch via Supabase.
+   * supabase.channel('campaigns').on('postgres_changes', ...).
+   * supabase.channel('platform_posts').on('postgres_changes', ...).
+   * No create/patch/remove exported -- those are gone.
+     Only `refresh` (fallback) + the data.
+
+ ------------------------------------------------------------------------------
+ REFACTORED: Dashboard + Pipeline
+ ------------------------------------------------------------------------------
+   * KPI counts aggregate at the platform_posts level
+     (e.g. "3 posts scheduled across 8 platform variants").
+   * Pipeline cards show platform chips (IG, X, LI, FB) with
+     per-platform status dots.
+   * Filter by platform AND status.
+
+ ------------------------------------------------------------------------------
+ REMOVED
+ ------------------------------------------------------------------------------
+   * LoginModal.jsx (Airtable formula auth)
+     -> replace with Supabase Auth UI or a small form calling
+        supabase.auth.signInWithPassword.
+
+
+================================================================================
+ 5. AI GENERATION STRATEGY (the actual multi-platform part)
+================================================================================
+
+ ONE image, FOUR captions. n8n flow on captions.generate_all:
+
+   [Trigger]  campaign.create
+       |
+       +--> Generate image (DALL-E / Imagen / Flux)
+       |       +-> UPDATE campaigns.generated_image_variants
+       |
+       +--> Branch in PARALLEL per selected platform:
+              +-> Instagram caption
+                  (visual-first, emojis, 5-10 hashtags, <=2200 chars)
+              +-> X (Twitter) caption
+                  (punchy, 1-2 hashtags, <=280 chars, hook in line 1)
+              +-> LinkedIn caption
+                  (professional, story-driven, line breaks, 100-200 words)
+              +-> Facebook caption
+                  (conversational, question prompts, medium length)
+                    |
+                    +-> UPDATE platform_posts.caption_draft
+                                              + caption_status='ready'
+
+ * Per-platform regenerate    -> runs only one branch.
+ * Image regenerate           -> runs the image branch only;
+                                 captions are left untouched.
+
+ Each platform's prompt template lives in n8n (or move to a
+ `prompt_templates` table in Supabase if you want it editable in-app).
+
+
+================================================================================
+ 6. POSTING LAYER (per platform)
+================================================================================
+
+  PLATFORM    API
+  --------    -------------------------------------------------------------
+  LinkedIn    LinkedIn Marketing API -- UGC posts endpoint
+  Instagram   Meta Graph API -- /{ig-user-id}/media + /media_publish
+              (image must be a public URL -- hence Drive / Supabase Storage)
+  Facebook    Meta Graph API -- /{page-id}/photos or /feed
+  X (Twitter) X API v2 -- POST /2/tweets + media upload v1.1
+
+ Schedule = scheduled_at column + an n8n cron workflow that polls every
+ minute for rows where:
+       published_status = 'scheduled' AND scheduled_at <= now()
+ -> fire the same post-now flow.
+
+
+================================================================================
+ 7. FILE-LEVEL CHECKLIST  (no code yet -- shape of the change)
+================================================================================
+
+  FILE                                       ACTION
+  ------------------------------------------ -----------------------------------
+  src/services/airtable.js                   DELETE.
+                                             Replace with services/supabase.js
+                                             (read-only).
+
+  src/services/webhook.js                    REWRITE as single
+                                             fireWebhook(action, payload).
+                                             Map every UI action to a webhook.
+
+  src/utils/config.js                        Strip Airtable IDs / PAT.
+                                             Add Supabase URL + anon key.
+                                             Replace FIELDS map with a Supabase
+                                             row type. Add PLATFORMS enum.
+
+  src/hooks/useRecords.js                    RENAME to useCampaigns.js.
+                                             Switch to Supabase fetch +
+                                             realtime subscriptions.
+                                             Remove mutation exports.
+
+  src/components/LoginModal.jsx              Replace formula login with
+                                             supabase.auth.signInWithPassword.
+
+  src/components/PlatformPickerModal.jsx     NEW. 4-card picker, multi-select.
+
+  src/pages/PostCreator.jsx                  Major restructure: platform tabs,
+                                             shared image section, per-platform
+                                             caption section with its own
+                                             regenerate / approve / post /
+                                             schedule controls.
+                                             Add image-variant carousel for
+                                             event / collage.
+
+  src/pages/Dashboard.jsx                    Aggregate counts over
+                                             platform_posts.
+                                             Show platform chips.
+
+  src/pages/Schedule.jsx                     Render one card per platform_post.
+                                             Filter by platform + status.
+
+  src/components/StatusBadge.jsx             Add platform icons + new status
+                                             mappings.
+
+  .env.example                               Replace Airtable vars with
+                                             VITE_SUPABASE_URL,
+                                             VITE_SUPABASE_ANON_KEY,
+                                             VITE_WEBHOOK_URL.
+
+  package.json                               Add @supabase/supabase-js.
+
+
+================================================================================
+ 8. SUGGESTED MIGRATION ORDER
+================================================================================
+
+  1. Stand up Supabase -- create schema, RLS, realtime, seed one
+     test campaign manually.
+  2. Build n8n flows for campaign.create + captions.generate_all
+     against the new schema.
+  3. Swap data layer -- replace Airtable client with Supabase reads +
+     realtime in useCampaigns. Auth via Supabase.
+     Dashboard / Schedule keep working off the new data.
+  4. Add PlatformPickerModal in front of the existing Post Creator
+     (still LinkedIn only at this point).
+  5. Add platform tabs in Post Creator, wire each tab to its own
+     platform_post row.
+  6. Move every button to webhook -- generate, regenerate caption,
+     regenerate image, approve, post-now, schedule.
+     Delete direct mutation paths.
+  7. Add multi-variant image carousel for event / collage
+     (3-4 previews -> pick -> fire image.select).
+  8. Wire each platform's posting API in n8n one at a time:
+     LinkedIn (already done) -> Instagram -> Facebook -> X.
+  9. Cron-based scheduled posting in n8n.
+
+
+================================================================================
+ 9. OPEN QUESTIONS TO DECIDE BEFORE CODING
+================================================================================
+
+  * Auth model: solo user, team workspaces, or org-wide?
+    -- drives RLS policy shape.
+
+  * Image variants storage: keep on Google Drive (current) or move to
+    Supabase Storage?
+    -- Supabase Storage is cleaner for RLS + signed URLs and removes
+       the Apps Script dependency.
+
+  * Caption editing: can the user edit captions in the UI before
+    approving, or is it AI-only?
+    -- If editable, the "edit" save also needs to go through a webhook.
+
+  * Per-platform schedule, or one schedule for all?
+    -- Current ask suggests per-platform -- confirm.
+
+  * Image regenerate cost: regenerating for 4 platforms is the same
+    image, but how many variants per request for event / collage?
+    3 or 4? Cost vs. UX trade-off.
+
+  * Failure UX: if 1 of 4 platforms fails to post, do the others still
+    go through?
+    -- Yes -- independent platform_post rows make that natural.
+
+
+================================================================================
+ END OF DOCUMENT
+================================================================================

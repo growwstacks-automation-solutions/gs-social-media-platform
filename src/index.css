@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { min-height: 100%; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #e6f3ed;
+  color: #12241f;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ambient backdrop — soft aurora glow + paper grain */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(48% 42% at 12% 2%,   rgba(20,184,166,0.10), transparent 60%),
+    radial-gradient(44% 40% at 100% 16%,  rgba(94,234,212,0.10), transparent 62%),
+    radial-gradient(55% 52% at 82% 104%,  rgba(13,148,136,0.08), transparent 64%),
+    radial-gradient(42% 42% at 0% 92%,    rgba(45,212,191,0.08), transparent 60%);
+  z-index: 0;
+}
+#root { position: relative; z-index: 1; }
+
+/* Selection */
+::selection { background: rgba(20,184,166,0.20); color: #0c1a17; }
+
+/* Scrollbar — refined */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a4d4c6, #80c0ae);
+  border-radius: 999px;
+  border: 2px solid #e6f3ed;
+}
+::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #80c0ae, #6bab98); }
+
+/* ---------- Form base ---------- */
+.input {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #a4d4c6;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #12241f;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+}
+.input:hover:not(:disabled):not(:focus) { border-color: #80c0ae; }
+.input:focus {
+  border-color: #0f8f77;
+  box-shadow: 0 0 0 4px rgba(15,143,119,0.16);
+}
+.input:disabled { opacity: 0.6; cursor: not-allowed; background: #ddf0e9; }
+.input::placeholder { color: #7c9a90; }
+
+/* ---------- Buttons ---------- */
+.btn-primary {
+  position: relative;
+  background: linear-gradient(135deg, #0f8f77 0%, #0a604f 100%);
+  color: #fff;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 8px 18px -10px rgba(12,118,99,0.55);
+  transition: transform 120ms ease, box-shadow 220ms ease, filter 160ms ease;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-primary::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.18) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: -1;
+}
+.btn-primary:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 14px 30px -10px rgba(12,118,99,0.65);
+}
+.btn-primary:hover::after { transform: translateX(120%); }
+.btn-primary:active   { transform: translateY(1px) scale(0.99); }
+.btn-primary:disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(0.2); }
+.btn-primary:disabled::after { display: none; }
+
+.btn-ghost {
+  background: #fff;
+  color: #12241f;
+  font-weight: 500;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  border: 1px solid #a4d4c6;
+  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease, box-shadow 160ms ease;
+}
+.btn-ghost:hover {
+  background: #ddf0e9;
+  border-color: #80c0ae;
+  box-shadow: 0 4px 12px -8px rgba(6,40,34,0.18);
+}
+.btn-ghost:active { transform: translateY(1px); }
+
+.btn-blue {
+  background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+  color: #fff;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 14px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 8px 20px -10px rgba(8,145,178,0.55);
+  transition: transform 120ms ease, box-shadow 220ms ease, filter 160ms ease;
+}
+.btn-blue:hover  { filter: brightness(1.06); box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 14px 30px -10px rgba(8,145,178,0.65); }
+.btn-blue:active { transform: translateY(1px) scale(0.99); }
+
+/* ---------- Cards ---------- */
+.card {
+  background: #fff;
+  border: 1px solid rgba(150,205,185,0.85);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(6,40,34,0.04), 0 8px 24px -12px rgba(6,40,34,0.10);
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 240ms ease;
+}
+.card-hover:hover {
+  transform: translateY(-3px);
+  border-color: rgba(15,143,119,0.45);
+  box-shadow: 0 2px 4px rgba(6,40,34,0.05), 0 24px 50px -22px rgba(6,40,34,0.22);
+}
+
+/* ---------- Display heading ---------- */
+.h-display {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Glass header ---------- */
+.glass {
+  background: rgba(230,243,237,0.82);
+  backdrop-filter: saturate(140%) blur(10px);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+}
+
+/* ---------- Skeleton shimmer ---------- */
+.shimmer {
+  background-image: linear-gradient(90deg, #c9e7dd 0%, #ddf0e9 40%, #c9e7dd 80%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* ---------- Stagger helpers ---------- */
+.stagger > * { animation: fadeUp 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 40ms; }
+.stagger > *:nth-child(2) { animation-delay: 100ms; }
+.stagger > *:nth-child(3) { animation-delay: 160ms; }
+.stagger > *:nth-child(4) { animation-delay: 220ms; }
+.stagger > *:nth-child(5) { animation-delay: 280ms; }
+.stagger > *:nth-child(6) { animation-delay: 340ms; }
+.stagger > *:nth-child(7) { animation-delay: 400ms; }
+.stagger > *:nth-child(8) { animation-delay: 460ms; }
+
+/* ---------- Focus outlines (keyboard) ---------- */
+*:focus-visible {
+  outline: 2px solid rgba(20,184,166,0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- Utility: line clamp tweak ---------- */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

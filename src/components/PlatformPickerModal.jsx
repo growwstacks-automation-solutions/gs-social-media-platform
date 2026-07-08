@@ -90,11 +90,15 @@ export default function PlatformPickerModal({ onConfirm, onClose, initial = [] }
             const meta = PLATFORM_META[pid];
             const b = BRAND[pid];
             const isIg = pid === 'instagram';
+            const comingSoon = pid === 'x'; // X/Twitter posting not enabled yet
             const active = selected.has(pid);
             return (
               <button
                 key={pid}
                 onClick={() => toggle(pid)}
+                disabled={comingSoon}
+                title={comingSoon ? 'Twitter / X posting is coming soon' : undefined}
+                aria-disabled={comingSoon || undefined}
                 style={{
                   animationDelay: `${80 + i * 60}ms`,
                   '--p': b.color,
@@ -107,9 +111,11 @@ export default function PlatformPickerModal({ onConfirm, onClose, initial = [] }
                 className={[
                   'relative rounded-2xl border-2 px-4 py-6 sm:py-8 transition-all duration-200 ease-snap animate-fade-up',
                   'flex flex-col items-center justify-center gap-3 group',
-                  active
-                    ? 'scale-[1.02]'
-                    : 'hover:-translate-y-0.5 hover:shadow-soft'
+                  comingSoon
+                    ? 'opacity-50 cursor-not-allowed'
+                    : active
+                      ? 'scale-[1.02]'
+                      : 'hover:-translate-y-0.5 hover:shadow-soft'
                 ].join(' ')}
               >
                 <span
@@ -139,6 +145,11 @@ export default function PlatformPickerModal({ onConfirm, onClose, initial = [] }
                 <span className="text-sm font-semibold text-ink-900" style={active ? { color: b.color } : undefined}>
                   {meta.label}
                 </span>
+                {comingSoon && (
+                  <span className="text-[10px] uppercase tracking-[0.14em] font-bold text-ink-500 bg-cream-200 rounded-full px-2 py-0.5">
+                    Soon
+                  </span>
+                )}
               </button>
             );
           })}
